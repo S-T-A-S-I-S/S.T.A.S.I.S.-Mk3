@@ -6,6 +6,7 @@ export interface WsClient {
 }
 
 export function createWS(
+  wsUrl: string,
   onMessage: MsgHandler,
   onConnect?: () => void,
   onDisconnect?: () => void,
@@ -15,8 +16,7 @@ export function createWS(
   let dead = false;
 
   function connect(): void {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    socket = new WebSocket(`${proto}://${location.host}/ws/voice`);
+    socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {
       delay = 1_000;

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -457,6 +458,14 @@ async def _lifespan(_app: FastAPI):
     await _browser_mod.close()
 
 app = FastAPI(title="S.T.A.S.I.S. Mk3", lifespan=_lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 _DIST = PROJECT_DIR / "frontend" / "dist"
 
 

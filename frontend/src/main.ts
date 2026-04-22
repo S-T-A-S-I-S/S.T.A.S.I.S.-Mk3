@@ -1,29 +1,54 @@
 import './style.css';
 import { createOrb, OrbState } from './orb';
 import { createVoiceInput, createAudioPlayer } from './voice';
-import { createWS } from './ws';
+import { createWS, WsClient } from './ws';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
-const canvas          = document.getElementById('canvas')           as HTMLCanvasElement;
-const statusEl        = document.getElementById('status')           as HTMLDivElement;
-const responseEl      = document.getElementById('response')         as HTMLDivElement;
-const transcriptEl    = document.getElementById('transcript')       as HTMLDivElement;
-const connDot         = document.getElementById('conn-dot')         as HTMLDivElement;
-const errorToast      = document.getElementById('error-toast')      as HTMLDivElement;
-const settingsPanel   = document.getElementById('settings-panel')   as HTMLDivElement;
-const muteBtn         = document.getElementById('btn-mute')         as HTMLButtonElement;
-const settingsBtn     = document.getElementById('btn-settings')     as HTMLButtonElement;
-const settingsClose   = document.getElementById('settings-close')   as HTMLButtonElement;
-const valBackend      = document.getElementById('val-backend')      as HTMLSpanElement;
-const valModel        = document.getElementById('val-model')        as HTMLSpanElement;
-const valUser         = document.getElementById('val-user')         as HTMLSpanElement;
-const valTts          = document.getElementById('val-tts')          as HTMLSpanElement;
-const valVoiceStatus  = document.getElementById('val-voice-status') as HTMLSpanElement;
-const btnRecord       = document.getElementById('btn-record')       as HTMLButtonElement;
-const recordProgress  = document.getElementById('record-progress')  as HTMLDivElement;
-const recordBar       = document.getElementById('record-bar')       as HTMLDivElement;
-const recordTimer     = document.getElementById('record-timer')     as HTMLSpanElement;
-const recordStatus    = document.getElementById('record-status')    as HTMLDivElement;
+const canvas          = document.getElementById('canvas')            as HTMLCanvasElement;
+const statusEl        = document.getElementById('status')            as HTMLDivElement;
+const responseEl      = document.getElementById('response')          as HTMLDivElement;
+const transcriptEl    = document.getElementById('transcript')        as HTMLDivElement;
+const connDot         = document.getElementById('conn-dot')          as HTMLDivElement;
+const errorToast      = document.getElementById('error-toast')       as HTMLDivElement;
+const settingsPanel   = document.getElementById('settings-panel')    as HTMLDivElement;
+const muteBtn         = document.getElementById('btn-mute')          as HTMLButtonElement;
+const settingsBtn     = document.getElementById('btn-settings')      as HTMLButtonElement;
+const settingsClose   = document.getElementById('settings-close')    as HTMLButtonElement;
+const valBackend      = document.getElementById('val-backend')       as HTMLSpanElement;
+const valModel        = document.getElementById('val-model')         as HTMLSpanElement;
+const valUser         = document.getElementById('val-user')          as HTMLSpanElement;
+const valTts          = document.getElementById('val-tts')           as HTMLSpanElement;
+const valVoiceStatus  = document.getElementById('val-voice-status')  as HTMLSpanElement;
+const btnRecord       = document.getElementById('btn-record')        as HTMLButtonElement;
+const recordProgress  = document.getElementById('record-progress')   as HTMLDivElement;
+const recordBar       = document.getElementById('record-bar')        as HTMLDivElement;
+const recordTimer     = document.getElementById('record-timer')      as HTMLSpanElement;
+const recordStatus    = document.getElementById('record-status')     as HTMLDivElement;
+const inputBackendUrl = document.getElementById('input-backend-url') as HTMLInputElement;
+
+// ── Backend URL (configurable, stored in localStorage) ────────────────────────
+const BACKEND_KEY     = 'stasis_backend_url';
+const DEFAULT_BACKEND = 'http://localhost:8765';
+
+function toWsUrl(base: string): string {
+  try {
+    const u = new URL(base.startsWith('http') ? base : `http://${base}`);
+    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    u.pathname = '/ws/voice';
+    return u.toString();
+  } catch { return 'ws://localhost:8765/ws/voice'; }
+}
+
+function toHttpBase(base: string): string {
+  try {
+    const u = new URL(base.startsWith('http') ? base : `http://${base}`);
+    u.pathname = u.search = u.hash = '';
+    return u.toString().replace(/\/$/, '');
+  } catch { return 'http://localhost:8765'; }
+}
+
+let backendBase = localStorage.getItem(BACKEND_KEY) ?? DEFAULT_BACKEND;
+let httpBase    = toHttpBase(backendBase);
 
 // ── Core systems ──────────────────────────────────────────────────────────────
 const orb   = createOrb(canvas);
@@ -67,36 +92,37 @@ function showError(msg: string): void {
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 let muted = false;
 
-const ws = createWS(
-  (msg) => {
-    const type = msg['type'] as string;
+function handleMsg(msg: Record<string, unknown>): void {
+  const type = msg['type'] as string;
 
-    if (type === 'status') {
-      const s = msg['state'] as OrbState | undefined;
-      if (s) setState(s);
-    }
+  if (type === 'status') {
+    const s = msg['state'] as OrbState | undefined;
+    if (s) setState(s);
+  }
 
-    if (type === 'audio') {
-      const b64  = msg['data']    as string;
-      const fmt  = (msg['format'] as string | undefined) ?? 'wav';
-      const text = msg['text']    as string | undefined;
-      if (text) showResponse(text);
-      if (!muted) audio.enqueue(b64, fmt);
-    }
+  if (type === 'audio') {
+    const b64  = msg['data']    as string;
+    const fmt  = (msg['format'] as string | undefined) ?? 'wav';
+    const text = msg['text']    as string | undefined;
+    if (text) showResponse(text);
+    if (!muted) audio.enqueue(b64, fmt);
+  }
 
-    if (type === 'text') {
-      showResponse(msg['text'] as string);
-      setState('idle');
-    }
+  if (type === 'text') {
+    showResponse(msg['text'] as string);
+    setState('idle');
+  }
 
-    if (type === 'error') {
-      showError(msg['text'] as string);
-      setState('idle');
-    }
-  },
-  () => connDot.classList.add('connected'),
-  () => connDot.classList.remove('connected'),
-);
+  if (type === 'error') {
+    showError(msg['text'] as string);
+    setState('idle');
+  }
+}
+
+function onConn()    { connDot.classList.add('connected'); }
+function onDisconn() { connDot.classList.remove('connected'); }
+
+let ws: WsClient = createWS(toWsUrl(backendBase), handleMsg, onConn, onDisconn);
 
 // ── Voice input ───────────────────────────────────────────────────────────────
 createVoiceInput((text) => {
@@ -126,6 +152,20 @@ muteBtn.addEventListener('click', () => {
 settingsBtn.addEventListener('click', () => settingsPanel.classList.add('open'));
 settingsClose.addEventListener('click', () => settingsPanel.classList.remove('open'));
 
+// ── Backend URL ───────────────────────────────────────────────────────────────
+inputBackendUrl.value = backendBase;
+
+inputBackendUrl.addEventListener('change', () => {
+  const v = inputBackendUrl.value.trim() || DEFAULT_BACKEND;
+  inputBackendUrl.value = v;
+  localStorage.setItem(BACKEND_KEY, v);
+  backendBase = v;
+  httpBase    = toHttpBase(v);
+  ws.close();
+  ws = createWS(toWsUrl(v), handleMsg, onConn, onDisconn);
+  poll();
+});
+
 // ── Voice training ────────────────────────────────────────────────────────────
 const RECORD_SECS = 30;
 let mediaRecorder: MediaRecorder | null = null;
@@ -140,7 +180,6 @@ function setRecordStatus(msg: string, cls: 'ok' | 'error' | '' = ''): void {
 
 btnRecord.addEventListener('click', async () => {
   if (mediaRecorder && mediaRecorder.state === 'recording') {
-    // Manual stop
     mediaRecorder.stop();
     return;
   }
@@ -155,7 +194,6 @@ btnRecord.addEventListener('click', async () => {
     };
 
     mediaRecorder.onstop = async () => {
-      // Stop mic tracks
       stream.getTracks().forEach(t => t.stop());
 
       if (recordInterval) { clearInterval(recordInterval); recordInterval = null; }
@@ -168,7 +206,7 @@ btnRecord.addEventListener('click', async () => {
 
       const blob = new Blob(recordChunks, { type: mediaRecorder!.mimeType });
       try {
-        const res = await fetch('/api/voice/sample', {
+        const res = await fetch(`${httpBase}/api/voice/sample`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/octet-stream' },
           body: blob,
@@ -192,7 +230,6 @@ btnRecord.addEventListener('click', async () => {
       btnRecord.disabled = false;
     };
 
-    // Start recording
     mediaRecorder.start(250);
     recordStart = Date.now();
     recordBar.style.width = '0%';
@@ -206,9 +243,7 @@ btnRecord.addEventListener('click', async () => {
       const pct     = Math.min((elapsed / RECORD_SECS) * 100, 100);
       recordBar.style.width    = `${pct}%`;
       recordTimer.textContent  = `${Math.floor(elapsed)} s`;
-      if (elapsed >= RECORD_SECS) {
-        mediaRecorder?.stop();
-      }
+      if (elapsed >= RECORD_SECS) mediaRecorder?.stop();
     }, 1000);
 
   } catch (err) {
@@ -219,7 +254,7 @@ btnRecord.addEventListener('click', async () => {
 // ── Health polling ────────────────────────────────────────────────────────────
 async function poll(): Promise<void> {
   try {
-    const r = await fetch('/health');
+    const r = await fetch(`${httpBase}/health`);
     if (!r.ok) throw new Error(`${r.status}`);
     const d = await r.json() as Record<string, string>;
     connDot.classList.add('connected');
