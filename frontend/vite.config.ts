@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  base: process.env.VITE_BASE ?? '/',
+  // VITE_GH_PAGES=1 avoids MSYS path-conversion (using a flag, not a path string)
+  base: process.env.VITE_GH_PAGES ? '/S.T.A.S.I.S.-Mk3/' : '/',
   build: {
     outDir: 'dist',
   },
