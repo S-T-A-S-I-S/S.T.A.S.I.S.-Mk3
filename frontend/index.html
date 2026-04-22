@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>S.T.A.S.I.S. Mk3</title>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="conn-dot"></div>
+  <div id="transcript"></div>
+  <div id="error-toast"></div>
+  <div id="response"></div>
+  <div id="status"></div>
+  <div id="label">S · T · A · S · I · S &nbsp;·&nbsp; M K 3</div>
+
+  <div id="controls">
+    <button class="ctrl-btn" id="btn-mute"     title="Mute / unmute">🔊</button>
+    <button class="ctrl-btn" id="btn-settings" title="Settings">⚙</button>
+  </div>
+
+  <!-- Settings panel -->
+  <div id="settings-panel">
+    <div class="settings-header">
+      <span class="settings-title">System Settings</span>
+      <button class="ctrl-btn" id="settings-close">✕</button>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-label">Connection</div>
+      <div class="settings-row">
+        <span>Backend</span>
+        <span class="settings-value offline" id="val-backend">checking…</span>
+      </div>
+      <div class="settings-row">
+        <span>Model</span>
+        <span class="settings-value" id="val-model">—</span>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-label">Preferences</div>
+      <div class="settings-row">
+        <span>User</span>
+        <span class="settings-value" id="val-user">—</span>
+      </div>
+      <div class="settings-row">
+        <span>Voice Engine</span>
+        <span class="settings-value" id="val-tts">—</span>
+      </div>
+      <div class="settings-row">
+        <span>Wikipedia</span>
+        <span class="settings-value online" id="val-wiki">live API</span>
+      </div>
+    </div>
+
+    <!-- Voice training section -->
+    <div class="settings-section">
+      <div class="settings-section-label">Voice Clone</div>
+      <div class="settings-row">
+        <span>Status</span>
+        <span class="settings-value" id="val-voice-status">not trained</span>
+      </div>
+      <div class="voice-train-ui">
+        <p class="voice-hint">Record 20–30 s of natural speech. STASIS will learn to speak in your voice.</p>
+        <button class="train-btn" id="btn-record">🎙 Start Recording</button>
+        <div id="record-progress" class="record-progress hidden">
+          <div class="record-bar-wrap">
+            <div class="record-bar" id="record-bar"></div>
+          </div>
+          <span id="record-timer">0 s</span>
+        </div>
+        <div id="record-status" class="record-status"></div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-label">System</div>
+      <div class="settings-row">
+        <span>Platform</span>
+        <span class="settings-value">Windows 11</span>
+      </div>
+      <div class="settings-row">
+        <span>UI Theme</span>
+        <span class="settings-value">Samsung One UI</span>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-label">Voice commands</div>
+      <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:6px">
+        <span class="cmd-example">"Open Spotify"</span>
+        <span class="cmd-example">"Check my disk space"</span>
+        <span class="cmd-example">"What is [topic]" — uses Wikipedia</span>
+        <span class="cmd-example">"Remember that [fact]"</span>
+        <span class="cmd-example">"Add task: [description]"</span>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
