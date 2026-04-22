@@ -155,6 +155,6 @@ def status() -> dict:
     """Return cloner status for /health endpoint."""
     return {
         "has_sample": has_sample(),
-        "xtts_available": _try_load_xtts() is not None if _xtts_checked else "unchecked",
+        "xtts_available": (_xtts_model is not None) if _xtts_checked else "unchecked",
         "sample_path": str(SAMPLE_PATH) if has_sample() else None,
     }

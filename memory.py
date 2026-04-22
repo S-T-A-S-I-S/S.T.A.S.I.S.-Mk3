@@ -13,6 +13,7 @@ All relevant memories are injected into every LLM prompt via build_context().
 import json
 import logging
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -22,12 +23,16 @@ log = logging.getLogger("stasis.memory")
 DB_PATH = Path(__file__).parent / "data" / "stasis.db"
 
 
+_tls = threading.local()
+
 def _get_db() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    if not hasattr(_tls, "conn"):
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        _tls.conn = conn
+    return _tls.conn
 
 
 def init_db() -> None:
@@ -77,7 +82,6 @@ def init_db() -> None:
             content='tasks', content_rowid='id'
         );
     """)
-    conn.close()
 
 
 # ── Memories ──────────────────────────────────────────────────────────────────
@@ -94,7 +98,6 @@ def remember(content: str, mem_type: str = "fact", source: str = "",
         "SELECT id FROM memories WHERE content = ?", (content,)
     ).fetchone()
     if existing:
-        conn.close()
         return existing["id"]
     cur = conn.execute(
         "INSERT INTO memories (type, content, source, importance, created_at) "
@@ -107,7 +110,6 @@ def remember(content: str, mem_type: str = "fact", source: str = "",
         (mem_id, content, mem_type, source)
     )
     conn.commit()
-    conn.close()
     log.debug(f"Stored [{mem_type}]: {content[:60]}")
     return mem_id
 
@@ -138,7 +140,6 @@ def recall(query: str, limit: int = 5) -> list[dict]:
         conn.commit()
     except Exception:
         rows = []
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -148,7 +149,6 @@ def get_important_memories(limit: int = 15) -> list[dict]:
         "SELECT * FROM memories ORDER BY importance DESC, access_count DESC LIMIT ?",
         (limit,)
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -159,7 +159,6 @@ def forget(fragment: str) -> int:
     )
     n = cur.rowcount
     conn.commit()
-    conn.close()
     return n
 
 
@@ -179,7 +178,6 @@ def add_task(title: str, description: str = "", priority: str = "medium",
         (task_id, title, description, project)
     )
     conn.commit()
-    conn.close()
     return task_id
 
 
@@ -191,7 +189,6 @@ def get_open_tasks(limit: int = 20) -> list[dict]:
         "due_date LIMIT ?",
         (limit,)
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -202,7 +199,6 @@ def complete_task(task_id: int) -> None:
         (time.time(), task_id)
     )
     conn.commit()
-    conn.close()
 
 
 # ── Notes ─────────────────────────────────────────────────────────────────────
@@ -217,7 +213,6 @@ def create_note(content: str, title: str = "", topic: str = "") -> int:
     )
     note_id = cur.lastrowid
     conn.commit()
-    conn.close()
     return note_id
 
 
@@ -229,6 +224,7 @@ def build_context(user_message: str = "") -> str:
     Injects high-priority tasks + relevant + important memories.
     """
     parts: list[str] = []
+    relevant: list[dict] = []
 
     # High-priority tasks
     tasks = [t for t in get_open_tasks(limit=10) if t["priority"] == "high"]
@@ -248,7 +244,7 @@ def build_context(user_message: str = "") -> str:
 
     # Top important memories (always available)
     important = get_important_memories(limit=5)
-    seen = {m["content"] for m in (relevant if "relevant" in dir() else [])}
+    seen = {m["content"] for m in relevant}
     top = [m for m in important if m["content"] not in seen][:3]
     if top:
         parts.append("Key facts:\n" + "\n".join(f"  - {m['content']}" for m in top))
@@ -262,7 +258,6 @@ def get_recent_memories(limit: int = 10) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM memories ORDER BY created_at DESC LIMIT ?", (limit,)
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 

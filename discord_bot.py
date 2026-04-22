@@ -38,13 +38,8 @@ import discord
 from discord.ext import commands
 
 # ── Env loading ───────────────────────────────────────────────────────────────
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for _line in _env.read_text().splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _k, _, _v = _line.partition("=")
-            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+from dotenv import load_dotenv
+load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DISCORD_TOKEN  = os.getenv("DISCORD_BOT_TOKEN",  "")

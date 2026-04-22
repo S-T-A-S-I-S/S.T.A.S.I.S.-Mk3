@@ -47,7 +47,7 @@ VOICE_DIR.mkdir(parents=True, exist_ok=True)
 # ── Subsystems ────────────────────────────────────────────────────────────────
 from memory       import build_context, remember, forget, add_task
 from pc_optimizer import match as pc_match, load_profile, generate_profile, profile_summary
-from voice_cloner import validate_sample, convert_to_wav, SAMPLE_PATH
+from voice_cloner import validate_sample, convert_to_wav, SAMPLE_PATH, has_sample, synth as vc_synth
 from wiki_knowledge import wiki_search
 import browser as _browser_mod
 
@@ -89,25 +89,21 @@ For code edits: read the file first, then rewrite with WRITE_FILE.
 User: {user}  |  Time: {time}
 """
 
-_EXTRACT_PROMPT = """\
-Given this exchange, list any facts worth remembering about the user long-term \
-(name, preferences, job, hardware, goals). One fact per line, plain text. \
-Reply with exactly NONE if nothing is worth storing.
-
-User said: {user_msg}
-Assistant said: {assistant_msg}
-"""
-
 # ── LLM ───────────────────────────────────────────────────────────────────────
 import urllib.request, urllib.error
 
+_hw_summary = ""
+
 def _build_system(user_message: str = "") -> str:
+    global _hw_summary
+    if not _hw_summary:
+        _hw_summary = profile_summary(_pc_profile)
     mem = build_context(user_message)
     mem_block = f"\n{mem}\n" if mem else ""
     return _SYSTEM.format(
         user=USER_NAME,
         time=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        hw=profile_summary(_pc_profile),
+        hw=_hw_summary,
         memory=mem_block,
     )
 
@@ -199,27 +195,30 @@ def _ollama_stream(prompt: str, system: str):
         yield f"⚠ Ollama error: {e}"
 
 
-async def _auto_extract(user_msg: str, assistant_msg: str) -> None:
-    """Fire-and-forget: silently store anything memorable from the exchange."""
-    try:
-        extract = _EXTRACT_PROMPT.format(
-            user_msg=user_msg[:400], assistant_msg=assistant_msg[:400]
-        )
-        result = "".join(llm_stream(extract, system_override="You extract facts from conversations.")).strip()
-        if result.upper() == "NONE" or not result:
-            return
-        for line in result.splitlines():
-            line = line.strip().lstrip("-•*").strip()
-            if line:
-                remember(line, source="auto-extract")
-    except Exception as e:
-        print(f"[memory extract] {e}")
+_FACT_PATTERNS = [
+    re.compile(r"my name is ([A-Za-z][\w ]{1,30})", re.I),
+    re.compile(r"I(?:'m| am) (?:a |an )?(.{3,60}?)(?:\.|,|$)", re.I),
+    re.compile(r"I (?:work|study) (?:at|in|for) (.{3,60}?)(?:\.|,|$)", re.I),
+    re.compile(r"I (?:like|love|hate|prefer|use|run|have) (.{3,60}?)(?:\.|,|$)", re.I),
+]
+
+async def _auto_extract(user_msg: str, _: str = "") -> None:
+    for pat in _FACT_PATTERNS:
+        m = pat.search(user_msg)
+        if m and len(m.group(0)) < 100:
+            remember(m.group(0).strip().rstrip(".,"), source="auto-extract")
 
 
 # ── TTS ───────────────────────────────────────────────────────────────────────
 async def synth_audio(text: str) -> tuple[Optional[bytes], str]:
-    """Return (audio_bytes, format). Priority: OpenAI → Fish → pyttsx3."""
-    # 1. OpenAI TTS
+    """Return (audio_bytes, format). Priority: XTTS → OpenAI → Fish → pyttsx3."""
+    # 1. Coqui XTTS v2 (cloned voice)
+    if has_sample():
+        result = await asyncio.to_thread(vc_synth, text)
+        if result:
+            return result, "wav"
+
+    # 2. OpenAI TTS
     if OPENAI_KEY:
         result = await _openai_tts(text)
         if result:
@@ -232,7 +231,7 @@ async def synth_audio(text: str) -> tuple[Optional[bytes], str]:
             return result, "mp3"
 
     # 4. pyttsx3
-    return _pyttsx3_tts(text), "wav"
+    return await asyncio.to_thread(_pyttsx3_tts, text), "wav"
 
 
 async def _openai_tts(text: str) -> Optional[bytes]:
@@ -269,21 +268,26 @@ async def _fish_tts(text: str) -> Optional[bytes]:
         return None
 
 
+_pyttsx3_engine = None
+
 def _pyttsx3_tts(text: str) -> Optional[bytes]:
+    global _pyttsx3_engine
     try:
         import pyttsx3
-        engine = pyttsx3.init()
-        engine.setProperty("rate", VOICE_RATE)
+        if _pyttsx3_engine is None:
+            _pyttsx3_engine = pyttsx3.init()
+            _pyttsx3_engine.setProperty("rate", VOICE_RATE)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             tmp = f.name
-        engine.save_to_file(text, tmp)
-        engine.runAndWait()
+        _pyttsx3_engine.save_to_file(text, tmp)
+        _pyttsx3_engine.runAndWait()
         with open(tmp, "rb") as f:
             audio = f.read()
         os.unlink(tmp)
         return audio if len(audio) > 100 else None
     except Exception as e:
         print(f"[pyttsx3 TTS] {e}")
+        _pyttsx3_engine = None
         return None
 
 
@@ -445,7 +449,14 @@ def strip_for_tts(text: str) -> str:
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
-app = FastAPI(title="S.T.A.S.I.S. Mk3")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    yield
+    await _browser_mod.close()
+
+app = FastAPI(title="S.T.A.S.I.S. Mk3", lifespan=_lifespan)
 _DIST = PROJECT_DIR / "frontend" / "dist"
 
 
@@ -543,8 +554,8 @@ async def ws_voice(ws: WebSocket):
                 await ws.send_json({"type": "status", "state": "idle"})
                 continue
 
-            # LLM
-            full = "".join(llm_stream(text))
+            # LLM (run synchronous urllib calls off the event loop)
+            full = await asyncio.to_thread(lambda: "".join(llm_stream(text)))
             await dispatch_actions(full, ws)
 
             voice = strip_for_tts(full)
